@@ -27,9 +27,9 @@ class Transcriber:
 
     def _detect_language(self, audio: np.ndarray) -> str:
         """Detect language, restricted to allowed set."""
-        _, probs = self._model.detect_language(audio)
+        _lang, _prob, all_probs = self._model.detect_language(audio)
         # Filter to allowed languages and pick the best
-        filtered = {lang: prob for lang, prob in probs if lang in ALLOWED_LANGUAGES}
+        filtered = {lang: prob for lang, prob in all_probs if lang in ALLOWED_LANGUAGES}
         if not filtered:
             return "en"
         best = max(filtered, key=filtered.get)

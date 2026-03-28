@@ -10,6 +10,7 @@ def _mock_model_with_detect(detected_lang="en"):
     mock_model = MagicMock()
     mock_model.detect_language.return_value = (
         detected_lang,
+        0.9,
         [("en", 0.9), ("ru", 0.1)],
     )
     return mock_model
