@@ -1,7 +1,10 @@
 """System tray icon showing daemon state."""
 
+from __future__ import annotations
+
 import logging
 import threading
+from typing import Callable
 
 from PIL import Image, ImageDraw
 import pystray
@@ -26,7 +29,7 @@ def _create_icon_image(color: str) -> Image.Image:
 
 
 class TrayIcon:
-    def __init__(self, on_quit: callable, on_mode_toggle: callable | None = None):
+    def __init__(self, on_quit: Callable, on_mode_toggle: Callable | None = None):
         self._on_quit = on_quit
         self._on_mode_toggle = on_mode_toggle
         self._current_mode = "hold"
