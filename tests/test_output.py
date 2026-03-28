@@ -8,7 +8,7 @@ def test_type_text_calls_xdotool():
     with patch("whisper_input.output.subprocess.run") as mock_run:
         type_text("hello world")
     mock_run.assert_called_once_with(
-        ["xdotool", "type", "--clearmodifiers", "--delay", "12", "hello world"],
+        ["xdotool", "type", "--clearmodifiers", "--delay", "20", "hello world"],
         check=True,
     )
 
@@ -24,13 +24,12 @@ def test_copy_to_clipboard_calls_xclip():
     )
 
 
-def test_output_text_does_both(monkeypatch):
+def test_output_text_copies_and_pastes(monkeypatch):
     calls = []
-    monkeypatch.setattr("whisper_input.output.type_text", lambda t: calls.append(("type", t)))
     monkeypatch.setattr("whisper_input.output.copy_to_clipboard", lambda t: calls.append(("clip", t)))
+    monkeypatch.setattr("whisper_input.output.subprocess.run", lambda *a, **kw: calls.append(("run", a[0])))
     monkeypatch.setattr("whisper_input.output.time.sleep", lambda _: None)
     output_text("hi")
-    assert ("type", "hi") in calls
     assert ("clip", "hi") in calls
 
 

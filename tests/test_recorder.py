@@ -8,7 +8,7 @@ from whisper_input.recorder import Recorder, _resample
 def _make_recorder(**kwargs):
     """Create Recorder with mocked sounddevice to avoid device queries."""
     with patch("whisper_input.recorder.sd") as mock_sd:
-        mock_sd.query_devices.return_value = {"default_samplerate": 16000.0}
+        mock_sd.query_devices.return_value = {"default_samplerate": 16000.0, "name": "mock-device"}
         mock_sd.default.device = (0, 0)
         recorder = Recorder(**kwargs)
     return recorder
