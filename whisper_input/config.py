@@ -9,10 +9,11 @@ DEFAULT_CONFIG = {
     "model": "medium",
     "device": "cuda",
     "compute_type": "float16",
-    "hotkey": "<cmd>+v",
+    "hotkey": "<ctrl>+`",
     "mode": "hold",
     "silence_timeout": 3,
     "language": "auto",
+    "audio_device": None,
 }
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "whisper-input" / "config.yaml"

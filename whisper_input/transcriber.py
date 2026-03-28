@@ -30,7 +30,7 @@ class Transcriber:
             audio,
             language=self.language,
             beam_size=5,
-            vad_filter=True,
+            vad_filter=False,
         )
 
         text = " ".join(seg.text.strip() for seg in segments).strip()

@@ -11,7 +11,7 @@ def test_load_defaults_when_no_file():
     assert config["model"] == "medium"
     assert config["device"] == "cuda"
     assert config["compute_type"] == "float16"
-    assert config["hotkey"] == "<cmd>+v"
+    assert config["hotkey"] == "<ctrl>+`"
     assert config["mode"] == "hold"
     assert config["silence_timeout"] == 3
     assert config["language"] == "auto"

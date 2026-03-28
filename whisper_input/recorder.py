@@ -4,6 +4,8 @@ import logging
 
 import numpy as np
 import sounddevice as sd
+from scipy.signal import resample_poly
+from math import gcd
 
 logger = logging.getLogger(__name__)
 
@@ -11,23 +13,26 @@ WHISPER_SAMPLE_RATE = 16000
 
 
 def _resample(audio: np.ndarray, orig_rate: int, target_rate: int) -> np.ndarray:
-    """Resample audio using linear interpolation."""
+    """Resample audio using polyphase filtering (anti-aliased)."""
     if orig_rate == target_rate:
         return audio
-    duration = len(audio) / orig_rate
-    target_len = int(duration * target_rate)
-    indices = np.linspace(0, len(audio) - 1, target_len)
-    return np.interp(indices, np.arange(len(audio)), audio).astype(np.float32)
+    divisor = gcd(orig_rate, target_rate)
+    up = target_rate // divisor
+    down = orig_rate // divisor
+    resampled = resample_poly(audio, up, down)
+    return resampled.astype(np.float32)
 
 
 class Recorder:
-    def __init__(self, target_samplerate: int = WHISPER_SAMPLE_RATE, channels: int = 1):
+    def __init__(self, target_samplerate: int = WHISPER_SAMPLE_RATE, channels: int = 1, device: int | None = None):
         self.target_samplerate = target_samplerate
         self.channels = channels
-        self._device_samplerate = int(sd.query_devices(sd.default.device[0])["default_samplerate"])
+        self._device = device
+        dev_info = sd.query_devices(device if device is not None else sd.default.device[0])
+        self._device_samplerate = int(dev_info["default_samplerate"])
         self._chunks: list[np.ndarray] = []
         self._stream: sd.InputStream | None = None
-        logger.info("Device sample rate: %d Hz, target: %d Hz", self._device_samplerate, self.target_samplerate)
+        logger.info("Audio device: %s (%d Hz), target: %d Hz", dev_info["name"], self._device_samplerate, self.target_samplerate)
 
     def _audio_callback(self, indata: np.ndarray, frames: int, time, status) -> None:
         if status:
@@ -41,6 +46,7 @@ class Recorder:
             samplerate=self._device_samplerate,
             channels=self.channels,
             dtype="float32",
+            device=self._device,
             callback=self._audio_callback,
         )
         self._stream.start()

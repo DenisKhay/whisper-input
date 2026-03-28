@@ -20,7 +20,7 @@ class App:
     def __init__(self, config: dict):
         self.config = config
         self._shutdown_event = threading.Event()
-        self._recorder = Recorder()
+        self._recorder = Recorder(device=config.get("audio_device"))
         self._transcriber: Transcriber | None = None
         self._hotkey: HotkeyListener | None = None
         self._tray: TrayIcon | None = None
@@ -36,6 +36,15 @@ class App:
         audio = self._recorder.stop()
         if len(audio) == 0:
             logger.warning("No audio captured")
+            if self._tray:
+                self._tray.set_state("idle")
+            return
+
+        import numpy as np
+        max_amp = float(np.max(np.abs(audio)))
+        logger.info("Audio max amplitude: %.4f", max_amp)
+        if max_amp < 0.01:
+            logger.warning("Audio too quiet (%.4f), skipping transcription", max_amp)
             if self._tray:
                 self._tray.set_state("idle")
             return
