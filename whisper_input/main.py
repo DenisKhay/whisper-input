@@ -36,14 +36,16 @@ class App:
         self._recorder.start()
 
     def _on_hotkey_start(self) -> None:
-        if self._wakeword and self._wakeword.is_active:
-            logger.info("Hotkey pressed while wake word active — ignoring")
+        # If wake word started recording, hotkey toggle should stop it
+        if self._recording_source == "wakeword":
+            self._on_recording_stop()
+            self._recording_source = None
             return
         self._recording_source = "hotkey"
         self._on_recording_start()
 
     def _on_hotkey_stop(self) -> None:
-        if self._recording_source != "hotkey":
+        if self._recording_source is None:
             return
         self._on_recording_stop()
         self._recording_source = None
