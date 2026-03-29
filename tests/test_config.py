@@ -49,3 +49,14 @@ def test_load_full_override():
             assert config[key] == value
     finally:
         os.unlink(path)
+
+
+def test_wakeword_defaults():
+    config = load_config("/nonexistent/path/config.yaml")
+    ww = config["wakeword"]
+    assert ww["enabled"] is False
+    assert ww["word"] == "claude"
+    assert ww["stop_word"] == "over"
+    assert ww["cancel_phrase"] == "claude cancel"
+    assert ww["timeout"] == 5
+    assert ww["beep"] is True
