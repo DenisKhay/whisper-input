@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 # Fuzzy variants of "claude" that Whisper tiny might produce
 CLAUDE_VARIANTS = {"claude", "claud", "cloud", "klaud", "clod"}
 
-SAMPLE_RATE = 16000
-CHUNK_SIZE = 512  # 32ms at 16kHz, required by silero-vad
+VAD_SAMPLE_RATE = 16000
+VAD_CHUNK_SIZE = 512  # 32ms at 16kHz, required by silero-vad
 
 
 def match_wake(text: str, word: str) -> bool:
@@ -62,13 +62,20 @@ class WakeWordListener:
         self._state = "idle"  # idle | recording
         self._vad_stream = None
 
+        # Detect device sample rate
+        dev_info = sd.query_devices(audio_device if audio_device is not None else sd.default.device[0])
+        self._device_rate = int(dev_info["default_samplerate"])
+        # Blocksize at device rate that gives ~32ms (same as VAD_CHUNK_SIZE at 16kHz)
+        self._device_blocksize = int(VAD_CHUNK_SIZE * self._device_rate / VAD_SAMPLE_RATE)
+        logger.info("VAD stream: device '%s' at %d Hz, blocksize %d", dev_info["name"], self._device_rate, self._device_blocksize)
+
         # VAD setup
         torch.set_num_threads(1)
         self._vad_model = load_silero_vad(onnx=False)
         self._vad_iterator = VADIterator(
             self._vad_model,
             threshold=0.5,
-            sampling_rate=SAMPLE_RATE,
+            sampling_rate=VAD_SAMPLE_RATE,
             min_silence_duration_ms=300,
             speech_pad_ms=30,
         )
@@ -102,13 +109,25 @@ class WakeWordListener:
             logger.info("Stop word detected: '%s'", text)
             self._on_stop()
 
+    def _resample_to_vad(self, audio: np.ndarray) -> np.ndarray:
+        """Resample audio from device rate to VAD rate (16kHz)."""
+        if self._device_rate == VAD_SAMPLE_RATE:
+            return audio
+        # Simple decimation — device_rate is always a multiple of 16kHz for common rates
+        ratio = self._device_rate / VAD_SAMPLE_RATE
+        indices = np.round(np.arange(VAD_CHUNK_SIZE) * ratio).astype(int)
+        indices = np.clip(indices, 0, len(audio) - 1)
+        return audio[indices].astype(np.float32)
+
     def _vad_callback(self, indata: np.ndarray, frames: int, time_info, status) -> None:
         """Called by sounddevice for each audio chunk."""
         if status:
             logger.warning("VAD stream status: %s", status)
 
-        audio_chunk = indata[:, 0].copy()
-        audio_tensor = torch.from_numpy(audio_chunk)
+        raw_chunk = indata[:, 0].copy()
+        # Resample to 16kHz for VAD (silero requires exactly 512 samples at 16kHz)
+        vad_chunk = self._resample_to_vad(raw_chunk)
+        audio_tensor = torch.from_numpy(vad_chunk)
 
         speech_dict = self._vad_iterator(audio_tensor, return_seconds=False)
 
@@ -128,11 +147,12 @@ class WakeWordListener:
                     ).start()
 
         if self._collecting_speech:
-            self._speech_buffer.append(audio_chunk)
+            # Store at 16kHz for Whisper tiny
+            self._speech_buffer.append(vad_chunk)
 
         # Timeout check during recording
         if self._state == "recording":
-            speech_prob = self._vad_model(audio_tensor, SAMPLE_RATE).item()
+            speech_prob = self._vad_model(audio_tensor, VAD_SAMPLE_RATE).item()
             if speech_prob > 0.5:
                 self._last_speech_time = time.time()
             elif time.time() - self._last_speech_time > self._config["timeout"]:
@@ -160,10 +180,10 @@ class WakeWordListener:
     def start(self) -> None:
         """Start the VAD listening stream."""
         self._vad_stream = sd.InputStream(
-            samplerate=SAMPLE_RATE,
+            samplerate=self._device_rate,
             channels=1,
             dtype="float32",
-            blocksize=CHUNK_SIZE,
+            blocksize=self._device_blocksize,
             device=self._audio_device,
             callback=self._vad_callback,
         )
