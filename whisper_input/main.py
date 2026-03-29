@@ -29,6 +29,8 @@ class App:
 
     def _on_recording_start(self) -> None:
         logger.info("Recording started")
+        if self._wakeword:
+            self._wakeword.pause()
         if self._tray:
             self._tray.set_state("recording")
         self._recorder.start()
@@ -68,6 +70,8 @@ class App:
     def _on_wakeword_cancel(self) -> None:
         if self._recording_source != "wakeword":
             self._recording_source = None
+            if self._wakeword:
+                self._wakeword.resume()
             return
         logger.info("Recording cancelled via wake word")
         self._recorder.stop()  # discard audio
@@ -80,6 +84,8 @@ class App:
         if self._tray:
             self._tray.set_state("idle")
         self._recording_source = None
+        if self._wakeword:
+            self._wakeword.resume()
 
     def _on_recording_stop(self) -> None:
         logger.info("Recording stopped, transcribing...")
@@ -88,6 +94,8 @@ class App:
             logger.warning("No audio captured")
             if self._tray:
                 self._tray.set_state("idle")
+            if self._wakeword:
+                self._wakeword.resume()
             return
 
         import numpy as np
@@ -97,6 +105,8 @@ class App:
             logger.warning("Audio too quiet (%.4f), skipping transcription", max_amp)
             if self._tray:
                 self._tray.set_state("idle")
+            if self._wakeword:
+                self._wakeword.resume()
             return
 
         if self._tray:
@@ -107,6 +117,8 @@ class App:
 
         if self._tray:
             self._tray.set_state("idle")
+        if self._wakeword:
+            self._wakeword.resume()
 
     def _on_mode_toggle(self, new_mode: str) -> None:
         if self._hotkey:

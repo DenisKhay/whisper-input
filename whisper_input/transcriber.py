@@ -27,8 +27,8 @@ class Transcriber:
         logger.info("Model loaded")
         self._quick_model: WhisperModel | None = None
         if enable_quick:
-            logger.info("Loading quick Whisper model 'tiny' on %s (%s)...", device, compute_type)
-            self._quick_model = WhisperModel("tiny", device=device, compute_type=compute_type)
+            logger.info("Loading quick Whisper model 'base' on %s (%s)...", device, compute_type)
+            self._quick_model = WhisperModel("base", device=device, compute_type=compute_type)
             logger.info("Quick model loaded")
 
     def _detect_language(self, audio: np.ndarray) -> str:

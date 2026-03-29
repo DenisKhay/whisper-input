@@ -11,8 +11,8 @@ from silero_vad import load_silero_vad, VADIterator
 
 logger = logging.getLogger(__name__)
 
-# Fuzzy variants of "claude" that Whisper tiny might produce
-CLAUDE_VARIANTS = {"claude", "claud", "cloud", "klaud", "clod"}
+# Fuzzy variants of "claude" that Whisper might produce (English + Russian)
+CLAUDE_VARIANTS = {"claude", "claud", "cloud", "klaud", "clod", "клод", "клот", "клоуд"}
 
 VAD_SAMPLE_RATE = 16000
 VAD_CHUNK_SIZE = 512  # 32ms at 16kHz, required by silero-vad
@@ -74,12 +74,16 @@ class WakeWordListener:
         self._vad_model = load_silero_vad(onnx=False)
         self._vad_iterator = VADIterator(
             self._vad_model,
-            threshold=0.5,
+            threshold=0.3,
             sampling_rate=VAD_SAMPLE_RATE,
-            min_silence_duration_ms=300,
-            speech_pad_ms=30,
+            min_silence_duration_ms=800,
+            speech_pad_ms=0,
         )
         logger.info("Wake word listener initialized")
+
+        # Rolling pre-buffer: keeps last ~500ms of audio so we don't clip the start
+        self._pre_buffer_chunks = int(0.5 * VAD_SAMPLE_RATE / VAD_CHUNK_SIZE)  # ~16 chunks
+        self._pre_buffer: list[np.ndarray] = []
 
         # Buffer for collecting speech segments
         self._speech_buffer: list[np.ndarray] = []
@@ -92,6 +96,7 @@ class WakeWordListener:
         if self._state == "idle" and match_wake(text, self._config["word"]):
             self._state = "recording"
             self._recording_start_time = time.time()
+            self._last_speech_time = time.time()
             logger.info("Wake word detected: '%s'", text)
             self._on_start()
 
@@ -129,12 +134,18 @@ class WakeWordListener:
         vad_chunk = self._resample_to_vad(raw_chunk)
         audio_tensor = torch.from_numpy(vad_chunk)
 
+        # Always maintain a rolling pre-buffer
+        self._pre_buffer.append(vad_chunk.copy())
+        if len(self._pre_buffer) > self._pre_buffer_chunks:
+            self._pre_buffer.pop(0)
+
         speech_dict = self._vad_iterator(audio_tensor, return_seconds=False)
 
         if speech_dict is not None:
             if "start" in speech_dict:
                 self._collecting_speech = True
-                self._speech_buffer.clear()
+                # Start with the pre-buffer so we capture the beginning of speech
+                self._speech_buffer = list(self._pre_buffer)
             elif "end" in speech_dict:
                 self._collecting_speech = False
                 if self._speech_buffer:
@@ -147,24 +158,12 @@ class WakeWordListener:
                     ).start()
 
         if self._collecting_speech:
-            # Store at 16kHz for Whisper tiny
             self._speech_buffer.append(vad_chunk)
 
-        # Timeout check during recording
-        if self._state == "recording":
-            speech_prob = self._vad_model(audio_tensor, VAD_SAMPLE_RATE).item()
-            if speech_prob > 0.5:
-                self._last_speech_time = time.time()
-            elif time.time() - self._last_speech_time > self._config["timeout"]:
-                self._state = "idle"
-                logger.info("Wake word timeout — no speech for %ds", self._config["timeout"])
-                self._on_cancel()
-                self._vad_iterator.reset_states()
-
     def _process_speech_segment(self, audio: np.ndarray) -> None:
-        """Process a detected speech segment through Whisper tiny."""
+        """Process a detected speech segment through Whisper."""
         try:
-            text = self._transcriber.quick_transcribe(audio)
+            text = self._transcriber.transcribe(audio)
             if not text:
                 return
 
@@ -172,8 +171,10 @@ class WakeWordListener:
 
             if self._state == "idle":
                 self._handle_keyword(text)
-            elif self._state == "recording":
-                self._handle_command(text)
+            # Note: stop/cancel commands not checked here because the VAD stream
+            # is paused during recording. Use hotkey (Ctrl+`) to stop recording
+            # after voice activation. Voice stop commands require audio device
+            # sharing which is a future enhancement.
         except Exception as e:
             logger.error("Error processing speech segment: %s", e)
 
@@ -192,12 +193,37 @@ class WakeWordListener:
         logger.info("Wake word listener started (word='%s', stop='%s')",
                      self._config["word"], self._config["stop_word"])
 
-    def stop(self) -> None:
-        """Stop the VAD listening stream."""
+    def pause(self) -> None:
+        """Pause the VAD stream to free the audio device for recording."""
         if self._vad_stream is not None:
             self._vad_stream.stop()
             self._vad_stream.close()
             self._vad_stream = None
+            self._collecting_speech = False
+            self._speech_buffer.clear()
+            logger.debug("VAD stream paused")
+
+    def resume(self) -> None:
+        """Resume the VAD stream after recording is done."""
+        if self._vad_stream is None:
+            self._vad_model.reset_states()
+            self._vad_iterator.reset_states()
+            self._pre_buffer.clear()
+            self._vad_stream = sd.InputStream(
+                samplerate=self._device_rate,
+                channels=1,
+                dtype="float32",
+                blocksize=self._device_blocksize,
+                device=self._audio_device,
+                callback=self._vad_callback,
+            )
+            self._vad_stream.start()
+            self._last_speech_time = time.time()
+            logger.debug("VAD stream resumed")
+
+    def stop(self) -> None:
+        """Stop the VAD listening stream."""
+        self.pause()
         self._vad_model.reset_states()
         self._vad_iterator.reset_states()
         logger.info("Wake word listener stopped")
