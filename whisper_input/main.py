@@ -24,12 +24,62 @@ class App:
         self._transcriber: Transcriber | None = None
         self._hotkey: HotkeyListener | None = None
         self._tray: TrayIcon | None = None
+        self._wakeword = None
+        self._recording_source: str | None = None  # "hotkey" or "wakeword"
 
     def _on_recording_start(self) -> None:
         logger.info("Recording started")
         if self._tray:
             self._tray.set_state("recording")
         self._recorder.start()
+
+    def _on_hotkey_start(self) -> None:
+        if self._wakeword and self._wakeword.is_active:
+            logger.info("Hotkey pressed while wake word active — ignoring")
+            return
+        self._recording_source = "hotkey"
+        self._on_recording_start()
+
+    def _on_hotkey_stop(self) -> None:
+        if self._recording_source != "hotkey":
+            return
+        self._on_recording_stop()
+        self._recording_source = None
+
+    def _on_wakeword_start(self) -> None:
+        if self._recording_source == "hotkey":
+            logger.info("Wake word triggered while hotkey active — ignoring")
+            return
+        self._recording_source = "wakeword"
+
+        ww_config = self.config.get("wakeword", {})
+        if ww_config.get("beep", True):
+            from whisper_input.beep import beep_wake
+            beep_wake()
+
+        self._on_recording_start()
+
+    def _on_wakeword_stop(self) -> None:
+        if self._recording_source != "wakeword":
+            return
+        self._on_recording_stop()
+        self._recording_source = None
+
+    def _on_wakeword_cancel(self) -> None:
+        if self._recording_source != "wakeword":
+            self._recording_source = None
+            return
+        logger.info("Recording cancelled via wake word")
+        self._recorder.stop()  # discard audio
+
+        ww_config = self.config.get("wakeword", {})
+        if ww_config.get("beep", True):
+            from whisper_input.beep import beep_cancel
+            beep_cancel()
+
+        if self._tray:
+            self._tray.set_state("idle")
+        self._recording_source = None
 
     def _on_recording_stop(self) -> None:
         logger.info("Recording stopped, transcribing...")
@@ -68,41 +118,68 @@ class App:
         self._shutdown_event.set()
         if self._hotkey:
             self._hotkey.stop()
+        if self._wakeword:
+            self._wakeword.stop()
         if self._tray:
             self._tray.stop()
 
     def run(self) -> None:
+        # Check system deps
         missing = check_dependencies()
         if missing:
             print(f"Missing system dependencies: {', '.join(missing)}")
             print("Install with: sudo apt install " + " ".join(missing))
             sys.exit(1)
 
+        # Determine if wake word is enabled
+        ww_config = self.config.get("wakeword", {})
+        wakeword_enabled = ww_config.get("enabled", False)
+
+        # Load transcriber
         self._transcriber = Transcriber(
             model=self.config["model"],
             device=self.config["device"],
             compute_type=self.config["compute_type"],
             language=self.config["language"],
+            enable_quick=wakeword_enabled,
         )
 
+        # Start tray
         self._tray = TrayIcon(
             on_quit=self._shutdown,
             on_mode_toggle=self._on_mode_toggle,
         )
         self._tray.start(mode=self.config["mode"])
 
+        # Start hotkey listener
         self._hotkey = HotkeyListener(
             hotkey_str=self.config["hotkey"],
             mode=self.config["mode"],
-            on_start=self._on_recording_start,
-            on_stop=self._on_recording_stop,
+            on_start=self._on_hotkey_start,
+            on_stop=self._on_hotkey_stop,
         )
         self._hotkey.start()
 
+        # Start wake word listener if enabled
+        if wakeword_enabled:
+            from whisper_input.wakeword import WakeWordListener
+            self._wakeword = WakeWordListener(
+                config=ww_config,
+                transcriber=self._transcriber,
+                recorder=self._recorder,
+                on_start=self._on_wakeword_start,
+                on_stop=self._on_wakeword_stop,
+                on_cancel=self._on_wakeword_cancel,
+                audio_device=self.config.get("audio_device"),
+            )
+            self._wakeword.start()
+
+        # Handle signals
         signal.signal(signal.SIGINT, lambda *_: self._shutdown())
         signal.signal(signal.SIGTERM, lambda *_: self._shutdown())
 
-        print(f"whisper-input running (mode={self.config['mode']}, hotkey={self.config['hotkey']})")
+        ww_status = " + wake word" if wakeword_enabled else ""
+        print(f"whisper-input running (mode={self.config['mode']}, hotkey={self.config['hotkey']}{ww_status})")
         print("Press Ctrl+C or use tray icon to quit.")
 
         self._shutdown_event.wait()
