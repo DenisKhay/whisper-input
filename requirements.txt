@@ -5,3 +5,5 @@ pynput
 pystray
 Pillow
 PyYAML
+scipy
+silero-vad
