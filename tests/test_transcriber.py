@@ -70,3 +70,29 @@ def test_transcribe_passes_explicit_language():
     assert call_kwargs["language"] == "en"
     # Should NOT call detect_language when language is explicit
     mock_model.detect_language.assert_not_called()
+
+
+def test_quick_transcribe_uses_tiny_model():
+    mock_medium = MagicMock()
+    mock_tiny = MagicMock()
+    seg = MagicMock()
+    seg.text = " hello "
+    mock_tiny.transcribe.return_value = (iter([seg]), MagicMock())
+
+    with patch("whisper_input.transcriber.WhisperModel") as MockModel:
+        MockModel.side_effect = [mock_medium, mock_tiny]
+        transcriber = Transcriber(model="medium", device="cpu", compute_type="int8", enable_quick=True)
+        result = transcriber.quick_transcribe(np.zeros(16000, dtype=np.float32))
+
+    assert result == "hello"
+    mock_tiny.transcribe.assert_called_once()
+    mock_medium.transcribe.assert_not_called()
+
+
+def test_quick_transcribe_disabled_raises():
+    mock_model = _mock_model_with_detect()
+    with patch("whisper_input.transcriber.WhisperModel", return_value=mock_model):
+        transcriber = Transcriber(model="medium", device="cpu", compute_type="int8", enable_quick=False)
+
+    with pytest.raises(RuntimeError):
+        transcriber.quick_transcribe(np.zeros(16000, dtype=np.float32))

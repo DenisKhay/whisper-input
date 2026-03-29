@@ -18,12 +18,18 @@ class Transcriber:
         device: str = "cuda",
         compute_type: str = "float16",
         language: str = "auto",
+        enable_quick: bool = False,
     ):
         self._auto = language == "auto"
         self._language = None if self._auto else language
         logger.info("Loading Whisper model '%s' on %s (%s)...", model, device, compute_type)
         self._model = WhisperModel(model, device=device, compute_type=compute_type)
         logger.info("Model loaded")
+        self._quick_model: WhisperModel | None = None
+        if enable_quick:
+            logger.info("Loading quick Whisper model 'tiny' on %s (%s)...", device, compute_type)
+            self._quick_model = WhisperModel("tiny", device=device, compute_type=compute_type)
+            logger.info("Quick model loaded")
 
     def _detect_language(self, audio: np.ndarray) -> str:
         """Detect language, restricted to allowed set."""
@@ -59,3 +65,10 @@ class Transcriber:
             logger.warning("Transcription returned empty text")
 
         return text
+
+    def quick_transcribe(self, audio: np.ndarray) -> str:
+        """Transcribe using the tiny model with beam_size=1 for low-latency results."""
+        if self._quick_model is None:
+            raise RuntimeError("quick_transcribe is not available: enable_quick was not set")
+        segments, _info = self._quick_model.transcribe(audio, beam_size=1)
+        return " ".join(seg.text.strip() for seg in segments).strip()
